@@ -847,7 +847,7 @@ def build_qsa_k2_module(
                     d_chunk = chunk_owner + Int32(gr * col_owners)
                     v_src = fx.slice(v_row, (None, d_chunk))
                     v_frag = fx.make_fragment_like(v_src)
-                    fx.copy(g_copy, v_src, v_frag)
+                    fx.copy(kv_copy, v_src, v_frag)
                     v_frags_pf.append(v_frag)
 
             # Compute K @ Q^T. The transposed QK C map is token-major in each
