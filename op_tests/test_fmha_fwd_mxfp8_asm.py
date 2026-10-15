@@ -19,6 +19,7 @@ from aiter import dtypes
 from aiter.jit.utils.chip_info import get_gfx
 from aiter.test_common import benchmark, checkAllclose, run_perftest
 from aiter.test_mha_common import attention_ref
+from aiter.utility.tolerance import unit_roundoff
 
 torch.set_default_device("cuda")
 
@@ -281,17 +282,21 @@ def test_fmha_fwd_mxfp8(batch, nheads, nheads_k, seqlen, d, causal, init_pattern
     ret = {"gfx": get_gfx()}
     for name, fn in candidates.items():
         out, us = run_perftest(fn)
-        # fp8 MHA tolerance: the fp8 matmul has an inherent per-element error
-        # (worst ~0.056 across all swept shapes).  atol=0.0625 (2^-4) / rtol=0.02
-        # keeps every element within tolerance (clean pass, no warning); the
-        # kernel is deterministic (bit-exact across launches) so this is stable.
-        # Still far tighter than aiter's fp8 attention_ref_with_tol floors of
-        # atol=0.5/rtol=0.1.
+        # atol is the unit roundoff of the fp8 format this kernel computes in
+        # (2**-4 == 0.0625 for e4m3), the literal this call used to pass. The
+        # fp8 matmul's worst per-element error across the swept shapes is
+        # ~0.056, so that value admits every element and the kernel is
+        # deterministic (bit-exact across launches). derive_tolerance would
+        # also scale by the binade of |ref|. On this reference that factor is
+        # at most 1, which would only tighten, so it is not applied. rtol
+        # stays 2e-2: the derived rtol is the same 0.0625 and would only
+        # loosen a gate that already passes. Still far tighter than the fp8
+        # floors in attention_ref_with_tol (atol=0.5, rtol=0.1).
         err = checkAllclose(
             ref.to(dtypes.fp32),
             out.to(dtypes.fp32),
             rtol=2e-2,
-            atol=6.25e-2,
+            atol=unit_roundoff(dtypes.fp8),
             msg=f"{name}: fmha_fwd_mxfp8",
         )
         ret[f"{name} us"] = us

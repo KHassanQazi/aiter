@@ -29,6 +29,10 @@ Typical use in an op_test::
 
     rtol, atol = tolerance_for(ref, compute_dtype=quant_dtype, num_accumulations=K)
     checkAllclose(ref, out, rtol=rtol, atol=atol, msg=msg)
+
+Pass ``reference_is_aligned=True`` only when the reference consumed the same
+quantized operands as the kernel. That rounding then cancels and the
+compute-dtype term is dropped. It is not inferred from the dtypes.
 """
 
 import math
@@ -85,6 +89,7 @@ def derive_tolerance(
     num_accumulations=1,
     max_value=1.0,
     safety_factor=1.0,
+    reference_is_aligned=False,
 ):
     """Return ``(rtol, atol)`` for one comparison.
 
@@ -103,6 +108,14 @@ def derive_tolerance(
         safety_factor: multiplier >= 1 for datapaths that are not
             round-to-nearest deterministic, e.g. stochastic rounding or an
             autotuner that reorders the reduction.
+        reference_is_aligned: the reference is computed from the same quantized
+            operand values the kernel consumed. That rounding is then in both
+            results and cancels, so the compute-dtype term is omitted and only
+            the output cast and the accumulator term remain. Leave this false
+            when the reference is a higher-precision oracle on the original
+            values, or when the kernel re-quantizes an intermediate the
+            reference does not: alignment is a property of the test, not of
+            the dtypes, and it cannot be inferred from them.
 
     Returns:
         ``(rtol, atol)``, both non-negative. An exact (integer) pipeline
@@ -131,8 +144,11 @@ def derive_tolerance(
 
     u_compute = unit_roundoff(compute_dtype)
     u_acc = unit_roundoff(acc_dtype)
+    # An aligned reference already consumed this rounding, so charging it again
+    # is slack. A misaligned one has not, and the term stays.
+    compute_term = 0.0 if reference_is_aligned else u_compute
 
-    rtol = safety_factor * max(u_compute, u_output, u_acc * num_accumulations)
+    rtol = safety_factor * max(compute_term, u_output, u_acc * num_accumulations)
 
     # The exponent is floored on purpose, matching ck_tile's
     # get_absolute_threshold ("Use discrete exponent (floor of log2) to match
@@ -154,7 +170,7 @@ def derive_tolerance(
         safety_factor
         * scale
         * max(
-            u_compute,
+            compute_term,
             u_output * 2.0,
             u_acc * num_accumulations,
         )
@@ -168,6 +184,7 @@ def tolerance_for(
     acc_dtype=torch.float32,
     num_accumulations=1,
     safety_factor=1.0,
+    reference_is_aligned=False,
 ):
     """:func:`derive_tolerance` with ``output_dtype`` and ``max_value`` read off
     the reference tensor."""
@@ -183,4 +200,5 @@ def tolerance_for(
         num_accumulations=num_accumulations,
         max_value=max_value,
         safety_factor=safety_factor,
+        reference_is_aligned=reference_is_aligned,
     )
