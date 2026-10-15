@@ -102,6 +102,42 @@ def test_safety_factor_only_loosens():
         raise AssertionError(f"safety_factor={bad} should have been rejected")
 
 
+def test_aligned_reference_drops_the_compute_term():
+    # The reference consumed the same fp8 values the kernel did, so u(fp8)
+    # is common to both sides. What remains is the bf16 store: half an ULP
+    # in rtol, a full ULP in atol, on the exponent band of the data.
+    common = {
+        "compute_dtype": torch.float8_e4m3fnuz,
+        "output_dtype": torch.bfloat16,
+        "num_accumulations": 8192,
+        "max_value": 4096.0,
+    }
+    assert derive_tolerance(**common) == (2**-4, 256.0)
+    assert derive_tolerance(**common, reference_is_aligned=True) == (2**-8, 32.0)
+
+    ref = torch.full((2, 2), 4096.0, dtype=torch.bfloat16)
+    assert tolerance_for(
+        ref,
+        compute_dtype=torch.float8_e4m3fnuz,
+        num_accumulations=8192,
+        reference_is_aligned=True,
+    ) == (2**-8, 32.0)
+
+
+def test_aligned_flag_is_a_no_op_when_the_output_cast_already_dominates():
+    # bf16 compute into bf16: the full-ULP output cast is already the largest
+    # term, so declaring the reference aligned does not move the gate.
+    kwargs = {
+        "compute_dtype": torch.bfloat16,
+        "output_dtype": torch.bfloat16,
+        "num_accumulations": 128,
+        "max_value": 2048.0,
+    }
+    assert derive_tolerance(**kwargs) == derive_tolerance(
+        **kwargs, reference_is_aligned=True
+    )
+
+
 def test_tolerance_for_reads_the_reference():
     ref = torch.zeros(4, 4, dtype=torch.bfloat16)
     ref[0, 0] = 4096.0
